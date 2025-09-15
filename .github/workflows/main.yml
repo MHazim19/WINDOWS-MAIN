@@ -1,7 +1,7 @@
 name: RDP Controller (Trigger, Wait, & Notify)
 
-# BENAR
 on:
+  # Bagian ini sudah benar, untuk menerima input dari bot
   workflow_dispatch:
     inputs:
       target_range:
@@ -10,12 +10,46 @@ on:
         default: 'ALL'
 
 jobs:
+  # Job 1: Membaca input dan membuat daftar repo secara dinamis
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          input="${{ github.event.inputs.target_range }}"
+          repos=""
+          if [[ "$input" == "ALL" ]]; then
+            input="1-20"
+          fi
+          
+          IFS=',' read -ra RANGES <<< "$input"
+          for range in "${RANGES[@]}"; do
+            if [[ "$range" == *-* ]]; then
+              start=$(echo "$range" | cut -d'-' -f1)
+              end=$(echo "$range" | cut -d'-' -f2)
+              for i in $(seq "$start" "$end"); do
+                repos="$repos,\"WINDOWS$i\""
+              done
+            else
+              repos="$repos,\"WINDOWS$range\""
+            fi
+          done
+          
+          repos=$(echo "$repos" | sed 's/^,//')
+          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+
+  # Job 2: Menjalankan semua proses HANYA untuk daftar repo dari Job 1
   process-rdp-session:
+    needs: generate-matrix # Memastikan job ini berjalan setelah Job 1
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        repo: [WINDOWS1, WINDOWS2, WINDOWS3, WINDOWS4, WINDOWS5, WINDOWS6, WINDOWS7, WINDOWS8, WINDOWS9, WINDOWS10, WINDOWS11, WINDOWS12, WINDOWS13, WINDOWS14, WINDOWS15, WINDOWS16, WINDOWS17, WINDOWS18, WINDOWS19, WINDOWS20]
+      # Menjalankan job satu per satu untuk menghindari rate limit API
+      max-parallel: 1
+      # Mengambil daftar repo secara dinamis dari output Job 1
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
       - name: 1. Trigger Workflow in ${{ matrix.repo }}
