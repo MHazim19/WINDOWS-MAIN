@@ -9,6 +9,7 @@ on:
         default: 'ALL'
 
 jobs:
+  # Job 1: Membaca input dan membuat daftar repo secara dinamis
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -29,6 +30,7 @@ jobs:
           done
           repos=$(echo "$repos" | sed 's/^,//'); echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
+  # Job 2: Menjalankan semua proses HANYA untuk daftar repo dari Job 1
   process-rdp-session:
     needs: generate-matrix
     runs-on: ubuntu-latest
@@ -50,7 +52,7 @@ jobs:
           echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
           echo "Workflow in ${{ matrix.repo }} has started with Run ID: $RUN_ID"
 
-      - name: 3. Wait for RDP Setup
+      - name: 3. Wait for RDP Setup # <<< PERBAIKAN PENTING DI LANGKAH INI
         run: |
           echo "Waiting for 3 minutes for the RDP session to be ready..."
           sleep 180
