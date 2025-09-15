@@ -2,50 +2,14 @@ name: RDP Controller (Trigger, Wait, & Notify)
 
 on:
   workflow_dispatch:
-    inputs:
-      target_range:
-        description: 'Jalankan untuk repo mana? (Contoh: "1-5,8" atau "ALL")'
-        required: true
-        default: 'ALL'
 
 jobs:
-  # Job 1: Membaca input dan membuat daftar repo yang akan dijalankan
-  generate-matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix }}
-    steps:
-      - id: set-matrix
-        run: |
-          input="${{ github.event.inputs.target_range }}"
-          repos=""
-          if [[ "$input" == "ALL" ]]; then
-            input="1-20"
-          fi
-          
-          IFS=',' read -ra RANGES <<< "$input"
-          for range in "${RANGES[@]}"; do
-            if [[ "$range" == *-* ]]; then
-              start=$(echo "$range" | cut -d'-' -f1)
-              end=$(echo "$range" | cut -d'-' -f2)
-              for i in $(seq "$start" "$end"); do
-                repos="$repos,\"WINDOWS$i\""
-              done
-            else
-              repos="$repos,\"WINDOWS$range\""
-            fi
-          done
-          
-          repos=$(echo "$repos" | sed 's/^,//')
-          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
-
-  # Job 2: Menjalankan seluruh proses untuk setiap repo yang ada di daftar
   process-rdp-session:
-    needs: generate-matrix # Menunggu Job 1 selesai
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+      matrix:
+        repo: [WINDOWS1, WINDOWS2, WINDOWS3, WINDOWS4, WINDOWS5, WINDOWS6, WINDOWS7, WINDOWS8, WINDOWS9, WINDOWS10, WINDOWS11, WINDOWS12, WINDOWS13, WINDOWS14, WINDOWS15, WINDOWS16, WINDOWS17, WINDOWS18, WINDOWS19, WINDOWS20]
 
     steps:
       - name: 1. Trigger Workflow in ${{ matrix.repo }}
@@ -66,7 +30,7 @@ jobs:
       - name: 3. Wait for ${{ matrix.repo }} to Complete
         run: |
           echo "Waiting for Run ID ${{ env.RUN_ID }} to finish..."
-          gh run watch ${{ env.RUN_ID }} --repo Hazim19/${{ matrix.repo }} --timeout 10m
+          timeout 10m gh run watch ${{ env.RUN_ID }} --repo Hazim19/${{ matrix.repo }} --exit-status
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
           
