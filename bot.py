@@ -7,10 +7,9 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 # Konfigurasi dasar
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# Ambil konfigurasi dari environment (secrets di GitHub Actions)
+# Ambil konfigurasi dari environment
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 ACTION_PAT = os.getenv("ACTION_PAT")
-# ▼▼▼ PERUBAHAN DI BARIS INI ▼▼▼
 GITHUB_USER = os.getenv("USERNAME_GH") # Disesuaikan dengan nama secret Anda
 CONTROLLER_REPO = "windows-main"
 
@@ -20,7 +19,7 @@ def trigger_workflow(workflow_file: str, target_range: str):
     url = f"https://api.github.com/repos/{GITHUB_USER}/{CONTROLLER_REPO}/actions/workflows/{workflow_file}/dispatches"
     headers = {
         "Accept": "application/vnd.github.v3+json",
-        "Authorization": f"token {ACTION_PAT}" # Diperbaiki untuk menggunakan ACTION_PAT
+        "Authorization": f"token {ACTION_PAT}"
     }
     data = {
         "ref": "main",
