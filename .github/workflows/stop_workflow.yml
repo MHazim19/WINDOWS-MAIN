@@ -9,7 +9,6 @@ on:
         default: 'ALL'
 
 jobs:
-  # Job 1: Membuat daftar repo yang akan dihentikan
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -20,8 +19,7 @@ jobs:
           input="${{ github.event.inputs.target_range }}"
           repos=""
           if [[ "$input" == "ALL" ]]; then input="1-20"; fi
-          IFS=',' read -ra RANGES <<< "$input"
-          for range in "${RANGES[@]}"; do
+          IFS=',' read -ra RANGES <<< "$input"; for range in "${RANGES[@]}"; do
             if [[ "$range" == *-* ]]; then
               start=$(echo "$range" | cut -d'-' -f1); end=$(echo "$range" | cut -d'-' -f2)
               for i in $(seq "$start" "$end"); do repos="$repos,\"WINDOWS$i\""; done
@@ -29,10 +27,8 @@ jobs:
               repos="$repos,\"WINDOWS$range\""
             fi
           done
-          repos=$(echo "$repos" | sed 's/^,//')
-          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+          repos=$(echo "$repos" | sed 's/^,//'); echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
-  # Job 2: Mencari, membatalkan, dan memverifikasi
   cancel-and-verify-session:
     needs: generate-matrix
     runs-on: ubuntu-latest
@@ -42,64 +38,37 @@ jobs:
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
-      - name: Find, Cancel, and Verify Workflow in ${{ matrix.repo }}
+      - name: Find, Cancel, and Verify Workflow
         id: cancel_run
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
-          # 1. MENCARI WORKFLOW AKTIF
-          echo "### 1. Searching for active workflow in Hazim19/${{ matrix.repo }}..."
+          echo "### 1. Searching for active workflow..."
           RUN_ID=$(gh run list --repo "Hazim19/${{ matrix.repo }}" --workflow main.yml --limit 5 --json databaseId,status --jq '.[] | select(.status=="in_progress" or .status=="queued") | .databaseId' | head -n 1)
-          
           if [[ -z "$RUN_ID" ]]; then
-            echo "RESULT: No running or queued RDP session found."
-            echo "status=not_found" >> $GITHUB_OUTPUT
-            exit 0
+            echo "RESULT: No running session found."
+            echo "status=not_found" >> $GITHUB_OUTPUT; exit 0
           fi
-          
-          # Memberi jeda antar perintah API
           sleep 2
-          
-          # 2. MENAMPILKAN DETAIL SEBELUM PEMBATALAN
-          echo "### 2. Found Run ID: $RUN_ID. Getting details before cancellation..."
+          echo "### 2. Found Run ID: $RUN_ID. Viewing details..."
           gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
-          
-          # Memberi jeda antar perintah API
           sleep 2
-
-          # 3. MENCOBA MEMBATALKAN
           echo "### 3. Attempting to cancel Run ID: $RUN_ID..."
           gh run cancel "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
-          echo "Cancel command executed."
-          
-          # Memberi jeda untuk verifikasi
           sleep 5
-          
-          # 4. MEMVERIFIKASI STATUS SETELAH PEMBATALAN
-          echo "### 4. Verifying status after cancellation attempt..."
+          echo "### 4. Verifying status..."
           FINAL_STATUS=$(gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}" --json status -q '.status')
           echo "Final status of Run ID $RUN_ID is: $FINAL_STATUS"
-
           if [[ "$FINAL_STATUS" == "cancelled" ]]; then
-            echo "RESULT: Verification successful. Workflow is cancelled."
             echo "status=cancelled" >> $GITHUB_OUTPUT
           else
-            echo "RESULT: VERIFICATION FAILED! Workflow is NOT cancelled."
             echo "status=failed_to_cancel" >> $GITHUB_OUTPUT
           fi
           
       - name: Send Stop Confirmation to Telegram
         run: |
           STATUS="${{ steps.cancel_run.outputs.status }}"
-          if [[ "$STATUS" == "cancelled" ]]; then
-            message="✅ Sesi RDP untuk *${{ matrix.repo }}* berhasil diverifikasi berhenti."
-          elif [[ "$STATUS" == "failed_to_cancel" ]]; then
-            message="❌ GAGAL! Perintah stop dijalankan tapi workflow *${{ matrix.repo }}* tidak berhenti. Cek log."
-          else
-            message="🟡 Tidak ada sesi RDP aktif yang ditemukan untuk *${{ matrix.repo }}*."
-          fi
-          
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d text="$message" \
-          -d parse_mode="Markdown"
+          if [[ "$STATUS" == "cancelled" ]]; then message="✅ Sesi RDP untuk *${{ matrix.repo }}* berhasil diverifikasi berhenti.";
+          elif [[ "$STATUS" == "failed_to_cancel" ]]; then message="❌ GAGAL! Perintah stop dijalankan tapi workflow *${{ matrix.repo }}* tidak berhenti.";
+          else message="🟡 Tidak ada sesi RDP aktif yang ditemukan untuk *${{ matrix.repo }}*."; fi
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -d text="$message" -d parse_mode="Markdown"
