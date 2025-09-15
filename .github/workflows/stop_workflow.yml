@@ -38,7 +38,6 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # ▼▼▼ TAMBAHKAN BARIS INI UNTUK MENCEGAH API RATE LIMIT ▼▼▼
       max-parallel: 1
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
@@ -57,19 +56,27 @@ jobs:
             echo "status=not_found" >> $GITHUB_OUTPUT
             exit 0
           fi
-
+          
+          # Memberi jeda antar perintah API
+          sleep 2
+          
           # 2. MENAMPILKAN DETAIL SEBELUM PEMBATALAN
           echo "### 2. Found Run ID: $RUN_ID. Getting details before cancellation..."
           gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
           
+          # Memberi jeda antar perintah API
+          sleep 2
+
           # 3. MENCOBA MEMBATALKAN
           echo "### 3. Attempting to cancel Run ID: $RUN_ID..."
           gh run cancel "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
           echo "Cancel command executed."
           
+          # Memberi jeda untuk verifikasi
+          sleep 5
+          
           # 4. MEMVERIFIKASI STATUS SETELAH PEMBATALAN
           echo "### 4. Verifying status after cancellation attempt..."
-          sleep 5
           FINAL_STATUS=$(gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}" --json status -q '.status')
           echo "Final status of Run ID $RUN_ID is: $FINAL_STATUS"
 
