@@ -1,98 +1,108 @@
-name: RDP with No-IP
+name: RDP Controller (Trigger, Wait, & Notify)
 
 on:
   workflow_dispatch:
+    inputs:
+      target_range:
+        description: 'Jalankan untuk repo mana? (Contoh: "1-5,8" atau "ALL")'
+        required: true
+        default: 'ALL'
 
 jobs:
-  secure-rdp:
-    runs-on: windows-2022
-    timeout-minutes: 360
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          input="${{ github.event.inputs.target_range }}"
+          repos=""
+          if [[ "$input" == "ALL" ]]; then
+            input="1-20"
+          fi
+          IFS=',' read -ra RANGES <<< "$input"
+          for range in "${RANGES[@]}"; do
+            if [[ "$range" == *-* ]]; then
+              start=$(echo "$range" | cut -d'-' -f1)
+              end=$(echo "$range" | cut -d'-' -f2)
+              for i in $(seq "$start" "$end"); do
+                repos="$repos,\"WINDOWS$i\""
+              done
+            else
+              repos="$repos,\"WINDOWS$range\""
+            fi
+          done
+          repos=$(echo "$repos" | sed 's/^,//')
+          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+
+  process-rdp-session:
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
-      - name: Configure Core RDP Settings
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          # ▼▼▼ PERBAIKAN DI BARIS INI ▼▼▼
-          netsh advfirewall firewall add rule name="RDP" dir=in action=allow protocol=TCP localport=3389
-          Restart-Service -Name TermService -Force
+      - name: 1. Trigger Workflow in ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        run: gh workflow run main.yml --repo Hazim19/${{ matrix.repo }}
 
-      - name: Create RDP User with Secure Password
+      - name: 2. Wait for Start and Get Run ID
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
-          $password = "Qwe123!"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          sleep 20
+          RUN_ID=$(gh run list --repo Hazim19/${{ matrix.repo }} --workflow main.yml --limit 1 --json databaseId -q '.[0].databaseId')
+          echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
+          echo "Workflow in ${{ matrix.repo }} has started with Run ID: $RUN_ID"
 
-      - name: Install Tailscale
+      - name: 3. Wait for RDP Setup
         run: |
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe" -OutFile "tailscale_setup.exe"
-          Start-Process -FilePath ".\tailscale_setup.exe" -ArgumentList "/S" -Wait
+          echo "Waiting for 1.5 minutes for the RDP session to be ready..."
+          sleep 90
+          
+      - name: 4. Download and Parse Log via API
+        id: rdp_details
+        run: |
+          echo "Downloading log archive for Run ID ${{ env.RUN_ID }}..."
+          
+          curl -L -s \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.ACTION_PAT }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/Hazim19/${{ matrix.repo }}/actions/runs/${{ env.RUN_ID }}/logs" \
+            -o logs.zip
 
-      - name: Establish Tailscale Connection
-        run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
+          unzip -q logs.zip -d unzipped_logs
           
-          $tsIP = $null; $retries = 0
-          while (-not $tsIP -and $retries -lt 12) {
-            Start-Sleep -Seconds 5
-            $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-            $retries++
-          }
-          if (-not $tsIP) { Write-Error "Tailscale IP not assigned."; exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Update No-IP DNS Record
-        run: |
-          $user = "${{ secrets.NOIP_USER }}"
-          $pass = "${{ secrets.NOIP_PASS }}"
-          $hostname = "${{ secrets.NOIP_HOSTNAME }}"
-          $ip = $env:TAILSCALE_IP
+          LOG_FILE_PATH=$(find unzipped_logs -type f -path "*secure-rdp/*.txt" | head -n 1)
           
-          $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes(("{0}:{1}" -f $user, $pass)))
-          $headers = @{ "Authorization" = "Basic $base64AuthInfo" }
-          $updateUrl = "http://dynupdate.no-ip.com/nic/update?hostname=$hostname&myip=$ip"
-          $userAgent = "GitHubActions-RDP/1.0 $user"
+          if [[ -f "$LOG_FILE_PATH" ]]; then
+            echo "Log file found at: $LOG_FILE_PATH"
+            LOG_CONTENT=$(cat "$LOG_FILE_PATH")
+            
+            ADDRESS=$(echo "$LOG_CONTENT" | grep 'Address:' | cut -d':' -f2- | xargs)
+            USERNAME=$(echo "$LOG_CONTENT" | grep 'Username:' | cut -d':' -f2- | xargs)
+            PASSWORD=$(echo "$LOG_CONTENT" | grep 'Password:' | cut -d':' -f2- | xargs)
+            
+            echo "address=$ADDRESS" >> $GITHUB_OUTPUT
+            echo "username=$USERNAME" >> $GITHUB_OUTPUT
+            echo "password=$PASSWORD" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: RDP detail log file not found inside the zip."
+          fi
 
-          Write-Host "Updating No-IP record for $hostname..."
-          $response = Invoke-RestMethod -Uri $updateUrl -Headers $headers -UserAgent $userAgent
-          
-          if ($response -like "good*" -or $response -like "nochg*") {
-            Write-Host "Successfully updated No-IP. Response: $response"
-            echo "DDNS_HOSTNAME=$hostname" >> $env:GITHUB_ENV
-          } else {
-            Write-Error "Failed to update No-IP. Response: $response"; exit 1
-          }
-
-      - name: Send Connection Details to Telegram
-        if: success()
+      - name: 5. Send RDP Details to Telegram
+        if: steps.rdp_details.outputs.address != ''
         run: |
-          $bot_token = "${{ secrets.TELEGRAM_BOT_TOKEN }}"
-          $chat_id = "${{ secrets.TELEGRAM_CHAT_ID }}"
-          $hostname = $env:DDNS_HOSTNAME
-          $password = $env:RDP_PASSWORD
-          $repo_name = "${{ github.repository }}"
-          
-          $message = @"
-          ✅ *Sesi RDP Siap Digunakan*
-          --------------------------------------
-          🖥️ *Alamat* : $hostname
-          👤 *Username* : RDP
-          🔑 *Password* : $password
-          --------------------------------------
-          Repositori: $repo_name
-          "@
-          
-          $telegram_url = "https://api.telegram.org/bot$bot_token/sendMessage"
-          $body = @{ chat_id = $chat_id; text = $message; parse_mode = 'Markdown' } | ConvertTo-Json
-          
-          Invoke-RestMethod -Uri $telegram_url -Method Post -Body $body -ContentType 'application/json'
-
-      - name: Maintain Connection
-        run: |
-          Write-Host "RDP session is active. Connection details sent to Telegram."
-          while ($true) {
-            Start-Sleep -Seconds 300
-          }
+          message="✅ *Sesi RDP Siap Digunakan* %0A"
+          message+="--------------------------------------%0A"
+          message+="🖥️ *Alamat* : \`${{ steps.rdp_details.outputs.address }}\`%0A"
+          message+="👤 *Username* : \`${{ steps.rdp_details.outputs.username }}\`%0A"
+          message+="🔑 *Password* : \`${{ steps.rdp_details.outputs.password }}\`%0A"
+          message+="--------------------------------------%0A"
+          message+="Repositori: \`Hazim19/${{ matrix.repo }}\`"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -d text="$message" -d parse_mode="Markdown"
