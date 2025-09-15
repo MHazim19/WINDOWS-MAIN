@@ -1,4 +1,4 @@
-name: Stop RDP Sessions (Debug Mode)
+name: Stop RDP Sessions
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ on:
         default: 'ALL'
 
 jobs:
-  # Job 1: (Tetap sama) Membuat daftar repo
+  # Job 1: Membuat daftar repo yang akan dihentikan
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -17,7 +17,6 @@ jobs:
     steps:
       - id: set-matrix
         run: |
-          # ... (script bash ini tetap sama persis, tidak perlu diubah) ...
           input="${{ github.event.inputs.target_range }}"
           repos=""
           if [[ "$input" == "ALL" ]]; then input="1-20"; fi
@@ -33,17 +32,21 @@ jobs:
           repos=$(echo "$repos" | sed 's/^,//')
           echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
-  # Job 2: (Diubah) Mencari, membatalkan, dan memverifikasi
+  # Job 2: Mencari, membatalkan, dan memverifikasi
   cancel-and-verify-session:
     needs: generate-matrix
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # ▼▼▼ TAMBAHKAN BARIS INI UNTUK MENCEGAH API RATE LIMIT ▼▼▼
+      max-parallel: 1
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
       - name: Find, Cancel, and Verify Workflow in ${{ matrix.repo }}
         id: cancel_run
+        env:
+          GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
           # 1. MENCARI WORKFLOW AKTIF
           echo "### 1. Searching for active workflow in Hazim19/${{ matrix.repo }}..."
@@ -52,7 +55,7 @@ jobs:
           if [[ -z "$RUN_ID" ]]; then
             echo "RESULT: No running or queued RDP session found."
             echo "status=not_found" >> $GITHUB_OUTPUT
-            exit 0 # Keluar dengan sukses karena tidak ada yang perlu dihentikan
+            exit 0
           fi
 
           # 2. MENAMPILKAN DETAIL SEBELUM PEMBATALAN
@@ -66,7 +69,7 @@ jobs:
           
           # 4. MEMVERIFIKASI STATUS SETELAH PEMBATALAN
           echo "### 4. Verifying status after cancellation attempt..."
-          sleep 5 # Beri waktu 5 detik bagi GitHub untuk memproses
+          sleep 5
           FINAL_STATUS=$(gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}" --json status -q '.status')
           echo "Final status of Run ID $RUN_ID is: $FINAL_STATUS"
 
@@ -77,8 +80,6 @@ jobs:
             echo "RESULT: VERIFICATION FAILED! Workflow is NOT cancelled."
             echo "status=failed_to_cancel" >> $GITHUB_OUTPUT
           fi
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
           
       - name: Send Stop Confirmation to Telegram
         run: |
@@ -86,7 +87,7 @@ jobs:
           if [[ "$STATUS" == "cancelled" ]]; then
             message="✅ Sesi RDP untuk *${{ matrix.repo }}* berhasil diverifikasi berhenti."
           elif [[ "$STATUS" == "failed_to_cancel" ]]; then
-            message="❌ GAGAL TOTAL! Perintah stop dijalankan tapi workflow *${{ matrix.repo }}* tidak berhenti. Cek log untuk detail."
+            message="❌ GAGAL! Perintah stop dijalankan tapi workflow *${{ matrix.repo }}* tidak berhenti. Cek log."
           else
             message="🟡 Tidak ada sesi RDP aktif yang ditemukan untuk *${{ matrix.repo }}*."
           fi
