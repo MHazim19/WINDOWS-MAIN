@@ -18,23 +18,16 @@ jobs:
         run: |
           input="${{ github.event.inputs.target_range }}"
           repos=""
-          if [[ "$input" == "ALL" ]]; then
-            input="1-20"
-          fi
-          IFS=',' read -ra RANGES <<< "$input"
-          for range in "${RANGES[@]}"; do
+          if [[ "$input" == "ALL" ]]; then input="1-20"; fi
+          IFS=',' read -ra RANGES <<< "$input"; for range in "${RANGES[@]}"; do
             if [[ "$range" == *-* ]]; then
-              start=$(echo "$range" | cut -d'-' -f1)
-              end=$(echo "$range" | cut -d'-' -f2)
-              for i in $(seq "$start" "$end"); do
-                repos="$repos,\"WINDOWS$i\""
-              done
+              start=$(echo "$range" | cut -d'-' -f1); end=$(echo "$range" | cut -d'-' -f2)
+              for i in $(seq "$start" "$end"); do repos="$repos,\"WINDOWS$i\""; done
             else
               repos="$repos,\"WINDOWS$range\""
             fi
           done
-          repos=$(echo "$repos" | sed 's/^,//')
-          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+          repos=$(echo "$repos" | sed 's/^,//'); echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
   process-rdp-session:
     needs: generate-matrix
@@ -46,13 +39,11 @@ jobs:
 
     steps:
       - name: 1. Trigger Workflow in ${{ matrix.repo }}
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        env: { GH_TOKEN: ${{ secrets.ACTION_PAT }} }
         run: gh workflow run main.yml --repo Hazim19/${{ matrix.repo }}
 
       - name: 2. Wait for Start and Get Run ID
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        env: { GH_TOKEN: ${{ secrets.ACTION_PAT }} }
         run: |
           sleep 20
           RUN_ID=$(gh run list --repo Hazim19/${{ matrix.repo }} --workflow main.yml --limit 1 --json databaseId -q '.[0].databaseId')
@@ -61,21 +52,45 @@ jobs:
 
       - name: 3. Wait for RDP Setup
         run: |
-          echo "Waiting for 3 minutes for the RDP session to be ready..."
-          sleep 180
+          echo "Waiting for 1.5 minutes for the RDP session to be ready..."
+          sleep 90
           
-      - name: 4. Download and Parse Log
+      # ▼▼▼ LANGKAH INI DIUBAH TOTAL ▼▼▼
+      - name: 4. Download and Parse Log via API
         id: rdp_details
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
-          LOG_CONTENT=$(gh run view ${{ env.RUN_ID }} --repo Hazim19/${{ matrix.repo }} --log || echo "Failed to get logs")
-          ADDRESS=$(echo "$LOG_CONTENT" | grep 'Address:' | cut -d':' -f2- | xargs)
-          USERNAME=$(echo "$LOG_CONTENT" | grep 'Username:' | cut -d':' -f2- | xargs)
-          PASSWORD=$(echo "$LOG_CONTENT" | grep 'Password:' | cut -d':' -f2- | xargs)
-          echo "address=$ADDRESS" >> $GITHUB_OUTPUT
-          echo "username=$USERNAME" >> $GITHUB_OUTPUT
-          echo "password=$PASSWORD" >> $GITHUB_OUTPUT
+          echo "Downloading log archive for Run ID ${{ env.RUN_ID }}..."
+          
+          # 1. Mengunduh log sebagai file zip menggunakan API
+          curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.ACTION_PAT }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/Hazim19/${{ matrix.repo }}/actions/runs/${{ env.RUN_ID }}/logs" \
+            -o logs.zip
+
+          # 2. Unzip file log
+          unzip -q logs.zip -d unzipped_logs
+          
+          # 3. Mencari dan membaca file log yang berisi detail RDP
+          #    Nama file log biasanya mengandung nama job, yaitu 'secure-rdp'
+          LOG_FILE_PATH=$(find unzipped_logs -type f -path "*secure-rdp/*.txt" | head -n 1)
+          
+          if [[ -f "$LOG_FILE_PATH" ]]; then
+            echo "Log file found at: $LOG_FILE_PATH"
+            LOG_CONTENT=$(cat "$LOG_FILE_PATH")
+            
+            # 4. Parsing (bagian ini tetap sama)
+            ADDRESS=$(echo "$LOG_CONTENT" | grep 'Address:' | cut -d':' -f2- | xargs)
+            USERNAME=$(echo "$LOG_CONTENT" | grep 'Username:' | cut -d':' -f2- | xargs)
+            PASSWORD=$(echo "$LOG_CONTENT" | grep 'Password:' | cut -d':' -f2- | xargs)
+            
+            echo "address=$ADDRESS" >> $GITHUB_OUTPUT
+            echo "username=$USERNAME" >> $GITHUB_OUTPUT
+            echo "password=$PASSWORD" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: RDP detail log file not found inside the zip."
+          fi
 
       - name: 5. Send RDP Details to Telegram
         if: steps.rdp_details.outputs.address != ''
