@@ -17,5 +17,5 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           ACTION_PAT: ${{ secrets.ACTION_PAT }} # Pastikan PAT juga ada di repo ini
-          GITHUB_USER: ${{ secrets.GITHUB_USER }}
+          GITHUB_USER: ${{ secrets.USERNAME_GH }}
         run: python bot.py
