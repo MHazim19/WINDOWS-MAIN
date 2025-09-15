@@ -1,7 +1,6 @@
 name: RDP Controller (Trigger, Wait, & Notify)
 
 on:
-  # Bagian ini sudah benar, untuk menerima input dari bot
   workflow_dispatch:
     inputs:
       target_range:
@@ -10,7 +9,6 @@ on:
         default: 'ALL'
 
 jobs:
-  # Job 1: Membaca input dan membuat daftar repo secara dinamis
   generate-matrix:
     runs-on: ubuntu-latest
     outputs:
@@ -20,77 +18,54 @@ jobs:
         run: |
           input="${{ github.event.inputs.target_range }}"
           repos=""
-          if [[ "$input" == "ALL" ]]; then
-            input="1-20"
-          fi
-          
-          IFS=',' read -ra RANGES <<< "$input"
-          for range in "${RANGES[@]}"; do
+          if [[ "$input" == "ALL" ]]; then input="1-20"; fi
+          IFS=',' read -ra RANGES <<< "$input"; for range in "${RANGES[@]}"; do
             if [[ "$range" == *-* ]]; then
-              start=$(echo "$range" | cut -d'-' -f1)
-              end=$(echo "$range" | cut -d'-' -f2)
-              for i in $(seq "$start" "$end"); do
-                repos="$repos,\"WINDOWS$i\""
-              done
+              start=$(echo "$range" | cut -d'-' -f1); end=$(echo "$range" | cut -d'-' -f2)
+              for i in $(seq "$start" "$end"); do repos="$repos,\"WINDOWS$i\""; done
             else
               repos="$repos,\"WINDOWS$range\""
             fi
           done
-          
-          repos=$(echo "$repos" | sed 's/^,//')
-          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+          repos=$(echo "$repos" | sed 's/^,//'); echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
-  # Job 2: Menjalankan semua proses HANYA untuk daftar repo dari Job 1
   process-rdp-session:
-    needs: generate-matrix # Memastikan job ini berjalan setelah Job 1
+    needs: generate-matrix
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # Menjalankan job satu per satu untuk menghindari rate limit API
       max-parallel: 1
-      # Mengambil daftar repo secara dinamis dari output Job 1
       matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
 
     steps:
       - name: 1. Trigger Workflow in ${{ matrix.repo }}
-        run: |
-          gh workflow run main.yml --repo Hazim19/${{ matrix.repo }}
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+        env: { GH_TOKEN: ${{ secrets.ACTION_PAT }} }
+        run: gh workflow run main.yml --repo Hazim19/${{ matrix.repo }}
 
-      - name: 2. Wait for ${{ matrix.repo }} to Start and Get Run ID
+      - name: 2. Wait for Start and Get Run ID
+        env: { GH_TOKEN: ${{ secrets.ACTION_PAT }} }
         run: |
-          sleep 15
+          sleep 20
           RUN_ID=$(gh run list --repo Hazim19/${{ matrix.repo }} --workflow main.yml --limit 1 --json databaseId -q '.[0].databaseId')
           echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
           echo "Workflow in ${{ matrix.repo }} has started with Run ID: $RUN_ID"
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
 
-      - name: 3. Wait for ${{ matrix.repo }} to Complete
+      - name: 3. Wait for RDP Setup
         run: |
-          echo "Waiting for Run ID ${{ env.RUN_ID }} to finish..."
-          timeout 10m gh run watch ${{ env.RUN_ID }} --repo Hazim19/${{ matrix.repo }} --exit-status
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
+          echo "Waiting for 3 minutes for the RDP session to be ready..."
+          sleep 180
           
-      - name: 4. Download and Parse Log for RDP Details
+      - name: 4. Download and Parse Log
         id: rdp_details
+        env: { GH_TOKEN: ${{ secrets.ACTION_PAT }} }
         run: |
-          echo "Downloading log for Run ID ${{ env.RUN_ID }}..."
           LOG_CONTENT=$(gh run view ${{ env.RUN_ID }} --repo Hazim19/${{ matrix.repo }} --log || echo "Failed to get logs")
-
           ADDRESS=$(echo "$LOG_CONTENT" | grep 'Address:' | cut -d':' -f2- | xargs)
           USERNAME=$(echo "$LOG_CONTENT" | grep 'Username:' | cut -d':' -f2- | xargs)
           PASSWORD=$(echo "$LOG_CONTENT" | grep 'Password:' | cut -d':' -f2- | xargs)
-
-          echo "Extracted Address: $ADDRESS"
-          
           echo "address=$ADDRESS" >> $GITHUB_OUTPUT
           echo "username=$USERNAME" >> $GITHUB_OUTPUT
           echo "password=$PASSWORD" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.ACTION_PAT }}
 
       - name: 5. Send RDP Details to Telegram
         if: steps.rdp_details.outputs.address != ''
@@ -102,8 +77,4 @@ jobs:
           message+="🔑 *Password* : \`${{ steps.rdp_details.outputs.password }}\`%0A"
           message+="--------------------------------------%0A"
           message+="Repositori: \`Hazim19/${{ matrix.repo }}\`"
-
-          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
-          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
-          -d text="$message" \
-          -d parse_mode="Markdown"
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" -d text="$message" -d parse_mode="Markdown"
