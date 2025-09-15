@@ -22,7 +22,7 @@ jobs:
           if [[ "$input" == "ALL" ]]; then
             input="1-20"
           fi
-
+          
           IFS=',' read -ra RANGES <<< "$input"
           for range in "${RANGES[@]}"; do
             if [[ "$range" == *-* ]]; then
@@ -35,7 +35,7 @@ jobs:
               repos="$repos,\"WINDOWS$range\""
             fi
           done
-
+          
           repos=$(echo "$repos" | sed 's/^,//')
           echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
 
@@ -51,31 +51,28 @@ jobs:
       - name: Find and Cancel Running Workflow in ${{ matrix.repo }}
         id: cancel_run
         run: |
-          # Mencari ID workflow RDP (main.yml) yang statusnya sedang berjalan
-          RUN_ID=$(gh run list --repo Hazim19/${{ matrix.repo }} --workflow main.yml --status in_progress --limit 1 --json databaseId -q '.[0].databaseId')
-
+          # Mencari ID dari workflow yang statusnya 'queued' ATAU 'in_progress'
+          RUN_ID=$(gh run list --repo "Hazim19/${{ matrix.repo }}" --workflow main.yml --limit 5 --json databaseId,status --jq '.[] | select(.status=="in_progress" or .status=="queued") | .databaseId' | head -n 1)
+          
           if [[ -z "$RUN_ID" ]]; then
-            # Jika tidak ada workflow yang berjalan
-            echo "No running RDP session found for ${{ matrix.repo }}."
+            echo "No running or queued RDP session found for ${{ matrix.repo }}."
             echo "status=not_found" >> $GITHUB_OUTPUT
           else
-            # Jika ditemukan, batalkan workflow tersebut
-            echo "Found running session with ID: $RUN_ID. Attempting to cancel..."
-            gh run cancel $RUN_ID --repo Hazim19/${{ matrix.repo }}
+            echo "Found active session with ID: $RUN_ID. Attempting to cancel..."
+            gh run cancel "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
             echo "status=cancelled" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
-
+          
       - name: Send Stop Confirmation to Telegram
         run: |
           if [[ "${{ steps.cancel_run.outputs.status }}" == "cancelled" ]]; then
             message="✅ Sesi RDP untuk *${{ matrix.repo }}* berhasil dihentikan."
           else
-            message="🟡 Tidak ada sesi RDP yang sedang berjalan untuk *${{ matrix.repo }}*."
+            message="🟡 Tidak ada sesi RDP aktif (berjalan/mengantri) yang ditemukan untuk *${{ matrix.repo }}*."
           fi
-
-          # Menggunakan curl untuk mengirim pesan balasan
+          
           curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
           -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
           -d text="$message" \
