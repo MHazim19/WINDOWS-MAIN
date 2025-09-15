@@ -1,7 +1,13 @@
 name: RDP Controller (Trigger, Wait, & Notify)
 
+# BENAR
 on:
   workflow_dispatch:
+    inputs:
+      target_range:
+        description: 'Jalankan untuk repo mana? (Contoh: "1-5,8" atau "ALL")'
+        required: true
+        default: 'ALL'
 
 jobs:
   process-rdp-session:
