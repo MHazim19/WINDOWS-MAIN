@@ -1,0 +1,65 @@
+name: Trigger All WINDOWS Workflows
+
+# Workflow ini berjalan saat Anda memicunya secara manual
+on:
+  workflow_dispatch:
+    inputs:
+      target_range:
+        description: 'Jalankan untuk repo mana? (Contoh: "1-5,8,10-12" atau "ALL")'
+        required: true
+        default: 'ALL'
+
+jobs:
+  # Job ini bertugas untuk membaca input dan membuat daftar repo yang akan dijalankan
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      # Output ini akan berisi daftar repo dalam format JSON
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        # Menggunakan script bash untuk memproses input (misal: "1-5,8") menjadi daftar repo
+        run: |
+          input="${{ github.event.inputs.target_range }}"
+          repos=""
+          if [[ "$input" == "ALL" ]]; then
+            input="1-20"
+          fi
+          
+          IFS=',' read -ra RANGES <<< "$input"
+          for range in "${RANGES[@]}"; do
+            if [[ "$range" == *-* ]]; then
+              start=$(echo "$range" | cut -d'-' -f1)
+              end=$(echo "$range" | cut -d'-' -f2)
+              for i in $(seq "$start" "$end"); do
+                repos="$repos,\"WINDOWS$i\""
+              done
+            else
+              repos="$repos,\"WINDOWS$range\""
+            fi
+          done
+          
+          # Membersihkan koma di awal dan membuat format JSON yang valid
+          repos=$(echo "$repos" | sed 's/^,//')
+          echo "matrix={\"repo\":[$repos]}" >> $GITHUB_OUTPUT
+
+  # Job ini akan memicu workflow di setiap repo yang ada di daftar
+  trigger-rdp-workflows:
+    # Membutuhkan hasil dari job 'generate-matrix'
+    needs: generate-matrix
+    runs-on: ubuntu-latest
+    # Menggunakan strategy.matrix untuk menjalankan job ini secara paralel untuk setiap repo
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Trigger Workflow in ${{ matrix.repo }}
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          # Nama file workflow di repositori target (sesuaikan jika berbeda)
+          workflow: main.yml 
+          # Menggunakan nama repo dari matrix
+          repo: Hazim19/${{ matrix.repo }}
+          # Menggunakan PAT yang sudah disimpan di secrets
+          token: ${{ secrets.ACTION_PAT }}
