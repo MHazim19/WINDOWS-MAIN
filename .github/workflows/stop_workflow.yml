@@ -44,20 +44,20 @@ jobs:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
           echo "### 1. Searching for active workflow..."
-          RUN_ID=$(gh run list --repo "Hazim19/${{ matrix.repo }}" --workflow main.yml --limit 5 --json databaseId,status --jq '.[] | select(.status=="in_progress" or .status=="queued") | .databaseId' | head -n 1)
+          RUN_ID=$(gh run list --repo "${{ secrets.USERNAME_GH }}/${{ matrix.repo }}" --workflow main.yml --limit 5 --json databaseId,status --jq '.[] | select(.status=="in_progress" or .status=="queued") | .databaseId' | head -n 1)
           if [[ -z "$RUN_ID" ]]; then
             echo "RESULT: No running session found."
             echo "status=not_found" >> $GITHUB_OUTPUT; exit 0
           fi
           sleep 2
           echo "### 2. Found Run ID: $RUN_ID. Viewing details..."
-          gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
+          gh run view "$RUN_ID" --repo "${{ secrets.USERNAME_GH }}/${{ matrix.repo }}"
           sleep 2
           echo "### 3. Attempting to cancel Run ID: $RUN_ID..."
-          gh run cancel "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}"
+          gh run cancel "$RUN_ID" --repo "${{ secrets.USERNAME_GH }}/${{ matrix.repo }}"
           sleep 5
           echo "### 4. Verifying status..."
-          FINAL_STATUS=$(gh run view "$RUN_ID" --repo "Hazim19/${{ matrix.repo }}" --json status -q '.status')
+          FINAL_STATUS=$(gh run view "$RUN_ID" --repo "${{ secrets.USERNAME_GH }}/${{ matrix.repo }}" --json status -q '.status')
           echo "Final status of Run ID $RUN_ID is: $FINAL_STATUS"
           if [[ "$FINAL_STATUS" == "cancelled" ]]; then
             echo "status=cancelled" >> $GITHUB_OUTPUT
