@@ -45,8 +45,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ACTION_PAT }}
         run: |
-          echo "Triggering workflow in Hazim19/${{ matrix.repo }}..."
-          gh workflow run main.yml --repo Hazim19/${{ matrix.repo }}
+          echo "Triggering workflow in ${{ secrets.USERNAME_GH }}/${{ matrix.repo }}..."
+          gh workflow run main.yml --repo ${{ secrets.USERNAME_GH }}/${{ matrix.repo }}
           
       - name: 2. Send Trigger Confirmation to Telegram
         run: |
